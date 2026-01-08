@@ -1,4 +1,9 @@
-const express = require('express');
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const FormData = require('form-data');
