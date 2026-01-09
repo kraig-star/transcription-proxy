@@ -1,9 +1,4 @@
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const FormData = require('form-data');
@@ -13,9 +8,12 @@ require('dotenv').config();
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Enable CORS for your frontend
+// Enable CORS
 app.use(cors({
-  origin: '*' // In production, specify your frontend URL
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: false
 }));
 
 app.use(express.json());
