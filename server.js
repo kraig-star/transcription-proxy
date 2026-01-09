@@ -3,6 +3,7 @@ const cors = require('cors');
 const multer = require('multer');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -17,6 +18,9 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Serve static files from public directory
+app.use(express.static('public'));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -62,7 +66,41 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Claude API proxy endpoint
+app.post('/api/claude', async (req, res) => {
+  try {
+    const { prompt, systemPrompt } = req.body;
 
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      return res.status(response.status).json({
+        error: errorData.error?.message || 'Claude API failed'
+      });
+    }
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error('Claude API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Transcription proxy server running on port ${PORT}`);
