@@ -308,6 +308,8 @@ app.post('/api/wordpress/posts', async (req, res) => {
   try {
     const { siteUrl, username, appPassword, title, content, featuredImageId, categoryId } = req.body;
     
+    console.log('Create post request:', { siteUrl, title: title?.substring(0, 50), categoryId });
+    
     if (!siteUrl || !username || !appPassword || !title || !content) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -329,7 +331,7 @@ app.post('/api/wordpress/posts', async (req, res) => {
       postData.categories = [categoryId];
     }
 
-    const response = await fetch(
+    let response = await fetch(
       `${baseUrl}/wp-json/wp/v2/posts`,
       {
         method: 'POST',
@@ -337,18 +339,47 @@ app.post('/api/wordpress/posts', async (req, res) => {
           'Authorization': authHeader,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(postData)
+        body: JSON.stringify(postData),
+        redirect: 'manual'
       }
     );
 
+    // Handle redirects manually to preserve auth header
+    if (response.status === 301 || response.status === 302 || response.status === 307 || response.status === 308) {
+      const redirectUrl = response.headers.get('location');
+      console.log('Redirect detected to:', redirectUrl);
+      
+      if (redirectUrl) {
+        response = await fetch(redirectUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': authHeader,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(postData)
+        });
+      }
+    }
+
     if (!response.ok) {
-      const errorData = await response.json();
-      return res.status(response.status).json({ 
-        error: errorData.message || 'Failed to create post' 
-      });
+      const errorText = await response.text();
+      console.error('Post creation failed:', response.status, errorText.substring(0, 500));
+      
+      try {
+        const errorData = JSON.parse(errorText);
+        return res.status(response.status).json({ 
+          error: errorData.message || 'Failed to create post' 
+        });
+      } catch {
+        return res.status(response.status).json({ 
+          error: `Failed to create post: ${response.status}` 
+        });
+      }
     }
 
     const post = await response.json();
+    console.log('Post created successfully:', { id: post.id, link: post.link });
+    
     res.json({
       id: post.id,
       link: post.link,
