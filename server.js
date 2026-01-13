@@ -179,8 +179,15 @@ app.post('/api/wordpress/media', async (req, res) => {
   try {
     const { siteUrl, username, appPassword, imageUrl, title } = req.body;
     
+    console.log('Media upload request:', { siteUrl, username: username ? '[set]' : '[missing]', imageUrl, title });
+    
     if (!siteUrl || !username || !appPassword || !imageUrl) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      return res.status(400).json({ error: `Missing required fields. imageUrl: ${imageUrl || 'MISSING'}` });
+    }
+    
+    // Validate URL format
+    if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+      return res.status(400).json({ error: `Invalid image URL format: ${imageUrl}` });
     }
 
     const baseUrl = siteUrl.replace(/\/$/, '');
