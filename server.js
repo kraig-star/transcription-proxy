@@ -190,65 +190,109 @@ app.post('/api/wordpress/media', async (req, res) => {
       return res.status(400).json({ error: `Invalid image URL format: ${imageUrl}` });
     }
 
-    const baseUrl = siteUrl.replace(/\/$/, '');
+    // Normalize the site URL - remove trailing slash and ensure https
+    let baseUrl = siteUrl.replace(/\/$/, '');
+    
     const authHeader = getWpAuthHeader(username, appPassword);
 
-    // Fetch the image from Unsplash
-    const imageResponse = await fetch(imageUrl);
+    // Fetch the image from the source URL
+    console.log('Fetching image from:', imageUrl);
+    const imageResponse = await fetch(imageUrl, { redirect: 'follow' });
     if (!imageResponse.ok) {
-      return res.status(400).json({ error: 'Failed to fetch image from URL' });
+      return res.status(400).json({ error: `Failed to fetch image from URL: ${imageResponse.status}` });
     }
 
     const imageBuffer = await imageResponse.buffer();
+    console.log('Image fetched, size:', imageBuffer.length);
     
     // Create a safe filename
     const safeTitle = (title || 'featured-image').replace(/[^a-zA-Z0-9]/g, '-').substring(0, 50);
     const filename = `${safeTitle}-featured.jpg`;
 
-    // Upload to WordPress
-    const formData = new FormData();
-    formData.append('file', imageBuffer, {
-      filename: filename,
-      contentType: 'image/jpeg'
+    // Helper function to create FormData with the image
+    const createFormData = () => {
+      const formData = new FormData();
+      formData.append('file', imageBuffer, {
+        filename: filename,
+        contentType: 'image/jpeg'
+      });
+      return formData;
+    };
+
+    // Try uploading to WordPress
+    const wpMediaUrl = `${baseUrl}/wp-json/wp/v2/media`;
+    console.log('Uploading to WordPress:', wpMediaUrl);
+    
+    let formData = createFormData();
+    let uploadResponse = await fetch(wpMediaUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        ...formData.getHeaders()
+      },
+      body: formData,
+      redirect: 'manual' // Don't auto-follow redirects
     });
 
-    const uploadResponse = await fetch(
-      `${baseUrl}/wp-json/wp/v2/media`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': authHeader,
-          ...formData.getHeaders()
-        },
-        body: formData
-      }
-    );
-
-    if (!uploadResponse.ok) {
-      const errorData = await uploadResponse.json();
-      return res.status(uploadResponse.status).json({ 
-        error: errorData.message || 'Failed to upload media' 
-      });
-    }
-
-    const mediaItem = await uploadResponse.json();
-    
-    // Update alt text if title provided
-    if (title) {
-      await fetch(
-        `${baseUrl}/wp-json/wp/v2/media/${mediaItem.id}`,
-        {
+    // Handle redirects manually to preserve auth header
+    if (uploadResponse.status === 301 || uploadResponse.status === 302 || uploadResponse.status === 307 || uploadResponse.status === 308) {
+      const redirectUrl = uploadResponse.headers.get('location');
+      console.log('Redirect detected to:', redirectUrl);
+      
+      if (redirectUrl) {
+        // Create fresh FormData for the redirect request
+        formData = createFormData();
+        uploadResponse = await fetch(redirectUrl, {
           method: 'POST',
           headers: {
             'Authorization': authHeader,
-            'Content-Type': 'application/json'
+            ...formData.getHeaders()
           },
-          body: JSON.stringify({
-            alt_text: title,
-            title: title
-          })
-        }
-      );
+          body: formData
+        });
+      }
+    }
+
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('Upload failed:', uploadResponse.status, errorText.substring(0, 500));
+      
+      // Try to parse as JSON, otherwise return the text
+      try {
+        const errorData = JSON.parse(errorText);
+        return res.status(uploadResponse.status).json({ 
+          error: errorData.message || 'Failed to upload media' 
+        });
+      } catch {
+        return res.status(uploadResponse.status).json({ 
+          error: `Failed to upload media: ${uploadResponse.status}` 
+        });
+      }
+    }
+
+    const mediaItem = await uploadResponse.json();
+    console.log('Media uploaded successfully, ID:', mediaItem.id);
+    
+    // Update alt text if title provided
+    if (title && mediaItem.id) {
+      try {
+        await fetch(
+          `${baseUrl}/wp-json/wp/v2/media/${mediaItem.id}`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': authHeader,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              alt_text: title,
+              title: title
+            })
+          }
+        );
+      } catch (altError) {
+        console.warn('Failed to update alt text:', altError.message);
+      }
     }
 
     res.json({ id: mediaItem.id, url: mediaItem.source_url });
