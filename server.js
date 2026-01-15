@@ -306,9 +306,9 @@ app.post('/api/wordpress/media', async (req, res) => {
 // Create WordPress post
 app.post('/api/wordpress/posts', async (req, res) => {
   try {
-    const { siteUrl, username, appPassword, title, content, featuredImageId, categoryId } = req.body;
+    const { siteUrl, username, appPassword, title, content, featuredImageId, categoryId, seoMeta } = req.body;
     
-    console.log('Create post request:', { siteUrl, title: title?.substring(0, 50), categoryId });
+    console.log('Create post request:', { siteUrl, title: title?.substring(0, 50), categoryId, hasSeoMeta: !!seoMeta });
     
     if (!siteUrl || !username || !appPassword || !title || !content) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -329,6 +329,15 @@ app.post('/api/wordpress/posts', async (req, res) => {
 
     if (categoryId) {
       postData.categories = [categoryId];
+    }
+
+    // Add Yoast SEO meta fields if provided
+    if (seoMeta) {
+      postData.meta = {
+        '_yoast_wpseo_focuskw': seoMeta.focusKeyphrase || '',
+        '_yoast_wpseo_title': seoMeta.seoTitle || '',
+        '_yoast_wpseo_metadesc': seoMeta.metaDescription || ''
+      };
     }
 
     let response = await fetch(
