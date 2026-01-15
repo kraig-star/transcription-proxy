@@ -344,6 +344,19 @@ app.post('/api/wordpress/posts', async (req, res) => {
       }
     );
 
+    // Capture Cloudflare headers for debugging
+    const cfRayId = response.headers.get('cf-ray');
+    const cfCacheStatus = response.headers.get('cf-cache-status');
+    const server = response.headers.get('server');
+    
+    console.log('WordPress API Response:', {
+      status: response.status,
+      cfRayId,
+      cfCacheStatus,
+      server,
+      url: `${baseUrl}/wp-json/wp/v2/posts`
+    });
+
     // Handle redirects manually to preserve auth header
     if (response.status === 301 || response.status === 302 || response.status === 307 || response.status === 308) {
       const redirectUrl = response.headers.get('location');
@@ -358,21 +371,46 @@ app.post('/api/wordpress/posts', async (req, res) => {
           },
           body: JSON.stringify(postData)
         });
+        
+        // Update Ray ID from redirect response
+        const newCfRayId = response.headers.get('cf-ray');
+        if (newCfRayId) {
+          console.log('Redirect cf-ray:', newCfRayId);
+        }
       }
     }
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Post creation failed:', response.status, errorText.substring(0, 500));
+      const finalCfRayId = response.headers.get('cf-ray') || cfRayId;
+      console.error('Post creation failed:', {
+        status: response.status,
+        cfRayId: finalCfRayId,
+        error: errorText.substring(0, 500)
+      });
       
       try {
         const errorData = JSON.parse(errorText);
         return res.status(response.status).json({ 
-          error: errorData.message || 'Failed to create post' 
+          error: errorData.message || 'Failed to create post',
+          cfRayId: finalCfRayId,
+          debug: {
+            status: response.status,
+            cfRayId: finalCfRayId,
+            server: response.headers.get('server'),
+            timestamp: new Date().toISOString()
+          }
         });
       } catch {
         return res.status(response.status).json({ 
-          error: `Failed to create post: ${response.status}` 
+          error: `Failed to create post: ${response.status}`,
+          cfRayId: finalCfRayId,
+          debug: {
+            status: response.status,
+            cfRayId: finalCfRayId,
+            server: response.headers.get('server'),
+            timestamp: new Date().toISOString()
+          }
         });
       }
     }
@@ -388,6 +426,83 @@ app.post('/api/wordpress/posts', async (req, res) => {
 
   } catch (error) {
     console.error('WordPress post creation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// WordPress debug endpoint - captures all Cloudflare headers
+app.post('/api/wordpress/debug', async (req, res) => {
+  try {
+    const { siteUrl, username, appPassword } = req.body;
+    
+    if (!siteUrl || !username || !appPassword) {
+      return res.status(400).json({ error: 'Missing required fields: siteUrl, username, appPassword' });
+    }
+
+    const baseUrl = siteUrl.replace(/\/$/, '');
+    const authHeader = getWpAuthHeader(username, appPassword);
+    
+    // Test the posts endpoint with a minimal request
+    const testData = {
+      title: 'API Debug Test - ' + new Date().toISOString(),
+      content: 'This is a debug test post. Please delete.',
+      status: 'draft'
+    };
+
+    console.log('Debug request to:', `${baseUrl}/wp-json/wp/v2/posts`);
+    
+    const response = await fetch(
+      `${baseUrl}/wp-json/wp/v2/posts`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(testData)
+      }
+    );
+
+    // Capture ALL response headers
+    const headers = {};
+    response.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
+    const responseText = await response.text();
+    let responseBody;
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch {
+      responseBody = responseText.substring(0, 1000);
+    }
+
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      request: {
+        url: `${baseUrl}/wp-json/wp/v2/posts`,
+        method: 'POST',
+        hasAuthHeader: !!authHeader
+      },
+      response: {
+        status: response.status,
+        statusText: response.statusText,
+        headers: headers,
+        body: responseBody
+      },
+      cloudflare: {
+        rayId: headers['cf-ray'] || null,
+        cacheStatus: headers['cf-cache-status'] || null,
+        server: headers['server'] || null
+      }
+    };
+
+    console.log('Debug response:', JSON.stringify(debugInfo, null, 2));
+    
+    res.json(debugInfo);
+
+  } catch (error) {
+    console.error('WordPress debug error:', error);
     res.status(500).json({ error: error.message });
   }
 });
